@@ -8,6 +8,7 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import re
 
 # Хранилище данных для графика
 ip_actions = defaultdict(lambda: {"Allow": 0, "Deny": 0})
@@ -160,8 +161,23 @@ def stop_sniffer():
         messagebox.showinfo("Sniffer", "Sniffer stopped.")
 
 
-# Добавление правила
+# Функция для проверки валидности IP-адреса
+def is_valid_ip(ip):
+    # Регулярное выражение для проверки правильности формата IP-адреса
+    pattern = r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+    return re.match(pattern, ip) is not None and all(0 <= int(part) <= 255 for part in ip.split('.'))
+
+# Обновление функции добавления правила
 def add_rule(ip):
+    if not ip:
+        messagebox.showwarning("Rule", "IP address cannot be empty.")
+        return
+    
+    if not is_valid_ip(ip):
+        messagebox.showwarning("Rule", f"{ip} is not a valid IP address.")
+        ip_entry.delete(0, tk.END)  # Очистка поля ввода после добавления
+        return
+
     if ip and ip not in blocked_ips:
         blocked_ips.append(ip)
         update_rules_list()
@@ -170,6 +186,7 @@ def add_rule(ip):
     elif ip in blocked_ips:
         messagebox.showwarning("Rule", f"IP {ip} is already in the deny list.")
         ip_entry.delete(0, tk.END)  # Очистка даже если IP уже в списке
+
 
 
 # Удаление правила
