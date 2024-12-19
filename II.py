@@ -1,6 +1,5 @@
 import pandas as pd
 
-# Функция для классификации на основе закономерностей
 def classify_traffic(features):
     # Средние значения для Benign
     benign_mean = {
@@ -29,7 +28,11 @@ def classify_traffic(features):
         'FLOW_DURATION_MILLISECONDS': 10000
     }
 
-    # Классификация на основе разницы с порогами и отклонений
+    # Простое правило для "Attack" на основе OUT_BYTES > IN_BYTES
+    if features['OUT_BYTES'] > features['IN_BYTES']:
+        return "Attack"
+
+    # Классификация на основе отклонений
     attack_score = 0
     benign_score = 0
 
@@ -46,6 +49,7 @@ def classify_traffic(features):
         else:
             benign_score += 50
 
+    # Финальная классификация
     if attack_score > benign_score:
         return "Attack"
     else:
@@ -82,8 +86,14 @@ correct_predictions = sum(df['Prediction'] == df['Attack_or_Benign'])
 total_predictions = len(df)
 accuracy = correct_predictions / total_predictions
 
-# Выводим точность
-print(f"Accuracy of the model: {accuracy * 100:.2f}%")
+# Сохраняем вывод в файл
+output_file = '/Users/danilabaxbax/Desktop/Output.txt'
 
-# Выводим результат
+with open(output_file, 'w') as f:
+    f.write(f"Accuracy of the model: {accuracy * 100:.2f}%\n\n")
+    f.write("Predictions and Actual Labels:\n")
+    df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 'FLOW_DURATION_MILLISECONDS', 'Prediction', 'Attack_or_Benign']].to_string(f)
+
+# Выводим точность и часть данных в консоль
+print(f"Accuracy of the model: {accuracy * 100:.2f}%")
 print(df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 'FLOW_DURATION_MILLISECONDS', 'Prediction', 'Attack_or_Benign']])
