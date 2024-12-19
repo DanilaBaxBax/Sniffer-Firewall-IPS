@@ -5,6 +5,7 @@ from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.tree import plot_tree
+import pickle  # Используем pickle для сохранения модели
 
 # Загрузка датасета
 df = pd.read_csv("/Users/danilabaxbax/Desktop/IDS/NF-ToN-IoT.csv")
@@ -75,3 +76,10 @@ plt.figure(figsize=(15, 10))
 plot_tree(rf_classifier.estimators_[0], feature_names=features, filled=True, rounded=True, class_names=['Benign', 'Attack'])
 plt.title("Visualization of a Single Decision Tree from RandomForest")
 plt.show()
+
+# Сохранение модели в файл .pkl
+pkl_file_path = '/Users/danilabaxbax/Desktop/random_forest_model.pkl'
+with open(pkl_file_path, 'wb') as file:
+    pickle.dump(rf_classifier, file)  # Сохраняем модель с помощью pickle
+
+print(f"Model saved as .pkl at {pkl_file_path}")
