@@ -2,12 +2,25 @@ import pandas as pd
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score  # Импортируем accuracy_score
 import matplotlib.pyplot as plt
 
 # Загрузка датасета
 df = pd.read_csv("/Users/danilabaxbax/Desktop/IDS/NF-ToN-IoT.csv")
 
+# Извлекаем уникальные метки до преобразования
+original_labels = df['Attack'].unique()
+print(f"Original labels: {original_labels}")
+
+# Сохраняем уникальные метки в файл
+labels_file_path = '/Users/danilabaxbax/Desktop/original_labels.txt'
+
+# Открываем файл для записи и сохраняем метки
+with open(labels_file_path, 'w') as f:
+    for label in original_labels:
+        f.write(f"{label}\n")
+
+print(f"Original labels have been saved to {labels_file_path}")
 # Преобразуем типы трафика из столбца 'Attack' в числовые значения с помощью LabelEncoder
 label_encoder = LabelEncoder()
 df['Attack'] = label_encoder.fit_transform(df['Attack'])  # Преобразуем метки в числа
@@ -50,7 +63,7 @@ y_pred = model.predict(X_test)
 y_pred_classes = y_pred.argmax(axis=1)  # Получаем предсказанные классы
 
 # Оценка точности
-accuracy = accuracy_score(y_test, y_pred_classes)
+accuracy = accuracy_score(y_test, y_pred_classes)  # Оценка точности
 print(f"Accuracy of the model on test data: {accuracy * 100:.2f}%")
 
 # Точность на обучающих данных (train data)
@@ -85,14 +98,12 @@ output_df.to_csv(output_file, index=False)
 
 print(f"Results have been saved to {output_file}")
 
+model_save_path = '/Users/danilabaxbax/Desktop/traffic_model.h5'
+model.save(model_save_path)
+print(f"Model has been saved to {model_save_path}")
+
 # Построение графиков точности на тренировочной и тестовой выборке
 train_acc = history.history['accuracy']
 val_acc = history.history['val_accuracy']
 
 plt.plot(train_acc, label='Training Accuracy')
-plt.plot(val_acc, label='Test Accuracy')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy')
-plt.legend()
-plt.title('Training and Test Accuracy')
-plt.show()
