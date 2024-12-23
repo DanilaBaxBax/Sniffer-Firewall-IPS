@@ -1,0 +1,10 @@
+Benign
+dos
+injection
+ddos
+scanning
+password
+mitm
+xss
+backdoor
+ransomware
