@@ -8,6 +8,7 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 import re
 import pickle
 from sklearn.preprocessing import LabelEncoder
@@ -23,6 +24,9 @@ ip_actions = defaultdict(lambda: {"Allow": 0, "Deny": 0})
 
 # Список заблокированных IP-адресов
 blocked_ips = []
+
+#Файл с правилами
+rules_file = "rules.txt"
 
 # Имя файла для сохранения логов
 log_file = "packet_logs.csv"
@@ -169,6 +173,19 @@ def stop_sniffer():
         messagebox.showinfo("Sniffer", "Sniffer stopped.")
 
 
+# Чтение правил из файла
+def load_rules_from_file():
+    global blocked_ips
+    if os.path.exists(rules_file):
+        with open(rules_file, "r") as file:
+            blocked_ips = [line.strip() for line in file if line.strip()]
+    update_rules_list()
+
+# Запись правил в файл
+def save_rules_to_file():
+    with open(rules_file, "w") as file:
+        file.write("\n".join(blocked_ips))
+
 # Функция для проверки валидности IP-адреса
 def is_valid_ip(ip):
     # Регулярное выражение для проверки правильности формата IP-адреса
@@ -176,45 +193,48 @@ def is_valid_ip(ip):
     return re.match(pattern, ip) is not None and all(0 <= int(part) <= 255 for part in ip.split('.'))
 
 # Обновление функции добавления правила
+# Добавление правила
 def add_rule(ip):
     if not ip:
         messagebox.showwarning("Rule", "IP address cannot be empty.")
         return
-    
+
     if not is_valid_ip(ip):
         messagebox.showwarning("Rule", f"{ip} is not a valid IP address.")
-        ip_entry.delete(0, tk.END)  # Очистка поля ввода после добавления
+        ip_entry.delete(0, tk.END)
         return
 
-    if ip and ip not in blocked_ips:
+    if ip not in blocked_ips:
         blocked_ips.append(ip)
-        update_rules_list()
+        save_rules_to_file()  # Сохраняем обновленный список в файл
+        update_rules_list()  # Обновляем интерфейс
         messagebox.showinfo("Rule", f"IP {ip} added to deny list.")
-        ip_entry.delete(0, tk.END)  # Очистка поля ввода после добавления
-    elif ip in blocked_ips:
+        ip_entry.delete(0, tk.END)
+    else:
         messagebox.showwarning("Rule", f"IP {ip} is already in the deny list.")
-        ip_entry.delete(0, tk.END)  # Очистка даже если IP уже в списке
-
+        ip_entry.delete(0, tk.END)
 
 
 # Удаление правила
 def remove_rule(ip=None):
-    if ip:  # Удаление по введенному адресу
+    if ip:
         if ip in blocked_ips:
             blocked_ips.remove(ip)
-            update_rules_list()
+            save_rules_to_file()  # Сохраняем обновленный список в файл
+            update_rules_list()  # Обновляем интерфейс
             messagebox.showinfo("Rule", f"IP {ip} removed from deny list.")
         else:
             messagebox.showwarning("Rule", f"IP {ip} not found in the deny list.")
-    else:  # Удаление выбранного в списке
-        selected_index = rules_listbox.curselection()  # Получаем индекс выбранного элемента
+    else:
+        selected_index = rules_listbox.curselection()
         if selected_index:
-            selected_ip = rules_listbox.get(selected_index)  # Получаем IP из списка
-            blocked_ips.remove(selected_ip)  # Удаляем IP из списка заблокированных
-            update_rules_list()  # Обновляем графический список
+            selected_ip = rules_listbox.get(selected_index)
+            blocked_ips.remove(selected_ip)
+            save_rules_to_file()  # Сохраняем обновленный список в файл
+            update_rules_list()  # Обновляем интерфейс
             messagebox.showinfo("Rule", f"IP {selected_ip} removed from deny list.")
         else:
-            messagebox.showwarning("Rule", "No IP selected to remove.")  # Если ничего не выбрано
+            messagebox.showwarning("Rule", "No IP selected to remove.")
 
 
 # Обновление списка правил в интерфейсе
@@ -223,6 +243,19 @@ def update_rules_list():
     for ip in blocked_ips:
         rules_listbox.insert(tk.END, ip)
 
+# Отслеживание изменений в файле
+def watch_rules_file():
+    global blocked_ips
+    try:
+        if os.path.exists(rules_file):
+            with open(rules_file, "r") as file:
+                new_ips = [line.strip() for line in file if line.strip()]
+                if new_ips != blocked_ips:
+                    blocked_ips = new_ips
+                    update_rules_list()
+    except Exception as e:
+        print(f"Error watching file: {e}")
+    root.after(1000, watch_rules_file)
 
 # Открытие файла логов
 def open_logs():
@@ -328,21 +361,26 @@ def read_csv_and_update_stats():
     except Exception as e:
         print(f"Ошибка чтения CSV: {e}")
 
-# Инициализация графика
-fig, ax = plt.subplots()
-
 def plot_graph():
+    # Создание нового окна для графика
+    graph_window = tk.Toplevel(root)
+    graph_window.title("Real-Time Incoming Packet Statistics")
+
+    # Создание объекта Figure для графика
+    fig, ax = Figure(figsize=(8, 6)), None
+
     def update(frame):
         """
         Функция для обновления графика.
         """
+        nonlocal ax
         # Обновляем статистику из CSV
         read_csv_and_update_stats()
 
-        # Очищаем ось
-        ax.clear()
+        # Очищаем ось и подготавливаем данные
+        fig.clear()
+        ax = fig.add_subplot(111)
 
-        # Подготавливаем данные для графика
         ips = list(ip_actions.keys())
         allow_values = [ip_actions[ip]["Allow"] for ip in ips]
         deny_values = [ip_actions[ip]["Deny"] for ip in ips]
@@ -359,14 +397,15 @@ def plot_graph():
         ax.set_ylabel("Количество пакетов")
         ax.set_xlabel("IP-адреса")
 
+    # Создание объекта Canvas для отображения графика в окне
+    canvas = FigureCanvasTkAgg(fig, master=graph_window)
+    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
     # Настройка анимации
     ani = FuncAnimation(fig, update, interval=1000)
 
-    # Важно: присвоение переменной ani
-    animation = ani
-
     # Запуск графика
-    plt.show()        
+    canvas.draw()    
 #########################################################################################IPS MODULE#####################################################################################
 
 # Инициализация переменных
@@ -662,6 +701,10 @@ remove_button.pack(side="left", padx=5)
 # Список текущих правил
 rules_listbox = tk.Listbox(root, height=10)
 rules_listbox.pack(pady=10, fill="both", expand=True)
+
+# Загрузка правил из файла и запуск отслеживания изменений
+load_rules_from_file()
+watch_rules_file()
 
 # Обновляем список правил при запуске
 update_rules_list()
