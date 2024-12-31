@@ -2,12 +2,15 @@ from scapy.all import sniff, IP, TCP, UDP, ICMP
 from datetime import datetime
 import csv
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, Toplevel, Button
+from tkinter import simpledialog
 import threading
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backend_bases import MouseEvent
+from matplotlib.widgets import RectangleSelector 
 from matplotlib.figure import Figure
 import re
 import pickle
@@ -88,7 +91,7 @@ def packet_handler(packet):
 
         protocol = "TCP" if TCP in packet else "UDP" if UDP in packet else "ICMP" if ICMP in packet else "OTHER"
         tcp_flags = get_tcp_flags(packet[TCP].flags) if TCP in packet else "NONE"
-        packet_size = len(packet) 
+        packet_size = len(packet)
 
         # Определяем направление пакета
         if is_local_ip(dst_ip):  # Входящий трафик
@@ -375,7 +378,7 @@ def plot_graph():
         """
         nonlocal ax
         # Обновляем статистику из CSV
-        read_csv_and_update_stats()
+        # read_csv_and_update_stats()  # Здесь нужно ваш код для чтения данных
 
         # Очищаем ось и подготавливаем данные
         fig.clear()
@@ -397,6 +400,22 @@ def plot_graph():
         ax.set_ylabel("Количество пакетов")
         ax.set_xlabel("IP-адреса")
 
+    # Обработчик нажатия на столбец для отображения информации
+    def on_click(event):
+        if event.inaxes != ax:
+            return
+        # Получаем индекс столбца
+        x_pos = event.xdata
+        if x_pos is None:
+            return
+        index = int(np.round(x_pos))
+        ip = list(ip_actions.keys())[index]
+        allow = ip_actions[ip]["Allow"]
+        deny = ip_actions[ip]["Deny"]
+        
+        # Показать информацию в popup
+        messagebox.showinfo("Информация о пакете", f"IP: {ip}\nAllow: {allow} пакетов\nDeny: {deny} пакетов")
+
     # Создание объекта Canvas для отображения графика в окне
     canvas = FigureCanvasTkAgg(fig, master=graph_window)
     canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -404,8 +423,16 @@ def plot_graph():
     # Настройка анимации
     ani = FuncAnimation(fig, update, interval=1000)
 
+    # Привязка события клика на график
+    canvas.mpl_connect("button_press_event", on_click)
+
     # Запуск графика
-    canvas.draw()    
+    canvas.draw()
+
+# Очистка правил
+def clear_rules():
+    with open("rules.txt", "w") as file:
+        file.truncate()  # Очищает содержимое файла        
 #########################################################################################IPS MODULE#####################################################################################
 
 # Инициализация переменных
@@ -624,12 +651,25 @@ def deep_plot_traffic_realtime():
         for traffic_type in traffic_types:
             traffic_data[traffic_type] = [traffic_count[ip].get(traffic_type, 0) for ip in ip_addresses]
 
+        # Создание нового окна для графика
+        graph_window = Toplevel()
+        graph_window.title("График запросов по IP")
+        graph_window.geometry("1400x900")
+
         # Создание графика
-        fig, ax = plt.subplots(figsize=(15, 8))  # Увеличиваем размер графика
+        fig, ax = plt.subplots(figsize=(15, 8), constrained_layout=True)  # Увеличиваем размер графика
         colors = plt.cm.get_cmap("tab10", len(traffic_types))  # 10 цветов
 
-        def update(frame):
-            """Функция обновления графика."""
+        # Сохраняем текущие пределы осей
+        def get_current_limits():
+            return ax.get_xlim(), ax.get_ylim()
+
+        def set_limits(xlim, ylim):
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+
+        def update_graph():
+            """Обновление данных графика."""
             ax.clear()
             width = 0.8 / len(traffic_types)  # Ширина одного столбца
             x_indices = np.arange(len(ip_addresses))  # Индексы для IP-адресов
@@ -637,41 +677,74 @@ def deep_plot_traffic_realtime():
             for idx, traffic_type in enumerate(traffic_types):
                 # Сдвиг столбцов для каждого типа трафика
                 x_positions = x_indices + (idx - len(traffic_types) / 2) * width
-                ax.bar(
+                bars = ax.bar(
                     x_positions,
                     traffic_data[traffic_type],
                     width=width,
                     label=traffic_type,
                     color=colors(idx),
+                    picker=True  # Включаем возможность выбора столбцов
                 )
 
             ax.set_xlabel('IP Address')
             ax.set_ylabel('Количество запросов')
             ax.set_title('Количество запросов по SRC_ADDR для различных типов трафика')
+
+            # Отображение всех меток на оси X
             ax.set_xticks(x_indices)
-            ax.set_xticklabels(ip_addresses, rotation=45, ha='right', fontsize=10)  # Угол поворота и размер шрифта
+            ax.set_xticklabels(ip_addresses, rotation=45, ha='right', fontsize=10)
+
+            for spine in ax.spines.values():
+                spine.set_linewidth(2)  # Увеличиваем толщину линий графика
+
             ax.legend(title="Тип трафика", loc='upper left', bbox_to_anchor=(1.05, 1))  # Легенда за пределами графика
             ax.grid(True)
+
+            # Восстанавливаем пределы осей, если они были сохранены
+            xlim, ylim = get_current_limits()
+            set_limits(xlim, ylim)
+
             fig.tight_layout()  # Автоматическая подгонка содержимого графика
 
-        ani = FuncAnimation(fig, update, frames=10, interval=1000, blit=False)
+        def on_click(event: MouseEvent):
+            """Вывод информации о столбце при наведении."""
+            if event.inaxes == ax:
+                for bar in ax.containers:
+                    for rect in bar:
+                        if rect.contains(event)[0]:
+                            ip_idx = int(rect.get_x() + rect.get_width() / 2)
+                            if ip_idx < len(ip_addresses):
+                                ip = ip_addresses[ip_idx]
+                                traffic_type = bar.get_label()
+                                count = rect.get_height()
+                                messagebox.showinfo(
+                                    "Данные столбца",
+                                    f"IP: {ip}\nТип трафика: {traffic_type}\nКоличество запросов: {count}"
+                                )
+                            return
 
-        # Вставка графика в Tkinter
-        global canvas
-        if 'canvas' in globals() and canvas:
-            canvas.get_tk_widget().destroy()  # Удаляем старый график, если он существует
+        # Включаем интерактивный режим
+        plt.ion()
 
-        canvas = FigureCanvasTkAgg(fig, master=ips_window)
+        # Подключение событий мыши
+        fig.canvas.mpl_connect("button_press_event", on_click)
+
+        # Создаем кнопку обновления графика вручную
+        update_button = Button(graph_window, text="Обновить график", command=update_graph)
+        update_button.pack(side="top", padx=5, pady=5)
+
+        # Вставка графика в окно Tkinter
+        canvas = FigureCanvasTkAgg(fig, master=graph_window)
         canvas.draw()
         canvas.get_tk_widget().pack(pady=10, fill='both', expand=True)
 
-           # Динамическое изменение размера окна
-        ips_window.update_idletasks()  # Обновляем размеры окна
-        graph_width = canvas.get_tk_widget().winfo_reqwidth()
-        graph_height = canvas.get_tk_widget().winfo_reqheight()
-        new_width = max(1400, graph_width + 50)  # Увеличиваем минимальную ширину окна
-        new_height = max(900, graph_height + 150)  # Увеличиваем минимальную высоту окна
-        ips_window.geometry(f"{new_width}x{new_height}")
+        # Вставка панели инструментов matplotlib
+        toolbar = NavigationToolbar2Tk(canvas, graph_window)
+        toolbar.update()
+        toolbar.pack(side="top", fill="x")
+
+        # Первый вызов обновления графика
+        update_graph()
 
     except Exception as e:
         messagebox.showerror("Ошибка", f"Ошибка при построении графика: {e}")
@@ -682,7 +755,7 @@ def open_ips_window():
     global ips_window, real_time_analysis_button
     ips_window = tk.Toplevel()
     ips_window.title("IPS Система")
-    ips_window.geometry("1920x1080")  # Увеличиваем размер окна
+    ips_window.geometry("600x400")  # Увеличиваем размер окна
 
     # Фрейм для верхних кнопок
     button_frame_top = tk.Frame(ips_window)
@@ -713,7 +786,14 @@ def open_ips_window():
     real_time_analysis_button = tk.Button(button_frame_bottom, text="Включить анализ в реальном времени", command=lambda: threading.Thread(target=real_time_analysis, daemon=True).start())
     real_time_analysis_button.pack(side="left", padx=5)
 
-
+# Кнопка анализа
+def toggle_analysis():
+    if analysis_button.config('text')[-1] == "Enable Analysis":
+        analysis_button.config(text="Disable Analysis", style="Toggled.TButton")
+        
+    else:
+        analysis_button.config(text="Enable Analysis", style="")
+        
 # Создание главного окна
 root = tk.Tk()
 root.title("Packet Sniffer GUI")
@@ -735,6 +815,13 @@ log_button.pack(side="left", padx=5)
 plot_button = ttk.Button(frame_controls, text="Show Graph", command=plot_graph)
 plot_button.pack(side="left", padx=5)
 
+style = ttk.Style()
+style.configure("Toggled.TButton", background="lightgreen")
+
+analysis_button = ttk.Button(frame_controls, text="Enable Analysis", command=toggle_analysis)
+analysis_button.pack(side="left", padx=5)
+
+
 # Кнопка для открытия окна IPS
 ips_button = ttk.Button(frame_controls, text= "IPS ", command=open_ips_window)
 ips_button.pack(side="left", padx=5)
@@ -751,6 +838,9 @@ add_button.pack(side="left", padx=5)
 
 remove_button = ttk.Button(frame_rules, text="Remove Selected Rule", command=lambda: remove_rule())
 remove_button.pack(side="left", padx=5)
+
+clear_button = ttk.Button(frame_rules, text="Clear Rules", command=clear_rules)
+clear_button.pack(side="left", padx=5)
 
 # Список текущих правил
 rules_listbox = tk.Listbox(root, height=10)
