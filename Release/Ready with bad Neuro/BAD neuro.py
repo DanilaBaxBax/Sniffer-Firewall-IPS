@@ -369,7 +369,7 @@ def plot_graph():
     graph_window = tk.Toplevel(root)
     graph_window.title("Real-Time Incoming Packet Statistics")
 
-    # Создание объекта Figure для графика
+    # Создание объекта Figure для графикасв
     fig, ax = Figure(figsize=(8, 6)), None
 
     def update(frame):
@@ -443,12 +443,25 @@ is_analyzing = False
 def load_model():
     """Загрузка модели нейронной сети из файла .pkl"""
     global model
+    model_path = 'random_forest_model.pkl'  # Загрузка модели по умолчанию при запуске
+
+    try:
+        with open(model_path, 'rb') as f:
+            model = pickle.load(f)
+        messagebox.showinfo("Успех", f"Модель успешно загружена: {model_path}")
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
+
+def load_another_model():
+    """Загрузка другой модели через диалоговое окно"""
+    global model
     model_path = filedialog.askopenfilename(filetypes=[("Pickle files", "*.pkl")])
+    
     if model_path:
         try:
             with open(model_path, 'rb') as f:
                 model = pickle.load(f)
-            messagebox.showinfo("Успех", "Модель успешно загружена.")
+            messagebox.showinfo("Успех", f"Модель успешно загружена: {model_path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
 
@@ -492,6 +505,7 @@ def analyze_logs():
 
 # Function for real-time analysis
 def real_time_analysis():
+    global analysis_running
     if model is None:
         messagebox.showerror("Ошибка", "Сначала загрузите модель.")
         return
@@ -533,7 +547,12 @@ def real_time_analysis():
             logs_df.to_csv(log_file, index=False)
 
             # Задержка перед следующей проверкой
-            time.sleep(5)  # Можете изменить на нужное вам время
+            #time.sleep(5)  # Можете изменить на нужное вам время
+            # Проверяем состояние каждые 0.1 секунды
+            for _ in range(50):  # 50 * 0.1 = 5 секунд
+                if not analysis_running:
+                    return
+                time.sleep(0.1)
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка при анализе логов: {e}")
@@ -543,12 +562,25 @@ def real_time_analysis():
 def deep_load_model():
     """Загрузка модели нейронной сети из файла .h5"""
     global deep_model
+    deep_model_path = 'Attack_Model.h5'  # Загрузка модели по умолчанию при запуске
+
+    try:
+        # Загрузка модели в формате h5
+        deep_model = tf.keras.models.load_model(deep_model_path)
+        messagebox.showinfo("Успех", f"Модель успешно загружена: {deep_model_path}")
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
+
+def deep_load_another_model():
+    """Загрузка другой модели через диалоговое окно"""
+    global deep_model
     deep_model_path = filedialog.askopenfilename(filetypes=[("H5 files", "*.h5")])
+    
     if deep_model_path:
         try:
             # Загрузка модели в формате h5
             deep_model = tf.keras.models.load_model(deep_model_path)
-            messagebox.showinfo("Успех", "Модель успешно загружена.")
+            messagebox.showinfo("Успех", f"Модель успешно загружена: {deep_model_path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
 
@@ -762,8 +794,8 @@ def open_ips_window():
     button_frame_top.pack(pady=10, fill='x')
 
     # Верхние кнопки
-    load_deep_model_button = tk.Button(button_frame_top, text="Загрузить глубокую модель", command=deep_load_model)
-    load_deep_model_button.pack(side="left", padx=5)
+    #load_deep_model_button = tk.Button(button_frame_top, text="Загрузить глубокую модель", command=deep_load_another_model)
+    #load_deep_model_button.pack(side="left", padx=5)
 
     deep_analysis_button = tk.Button(button_frame_top, text="Глубокий анализ", command=deep_analyze_logs)
     deep_analysis_button.pack(side="left", padx=5)
@@ -776,24 +808,49 @@ def open_ips_window():
     button_frame_bottom.pack(pady=10, fill='x', side='bottom')
 
     # Нижние кнопки
-    load_model_button = tk.Button(button_frame_bottom, text="Загрузить модель", command=load_model)
-    load_model_button.pack(side="left", padx=5)
+    #load_model_button = tk.Button(button_frame_bottom, text="Загрузить модель", command=load_another_model)
+    #load_model_button.pack(side="left", padx=5)
 
     analyze_logs_button = tk.Button(button_frame_bottom, text="Провести анализ", command=analyze_logs)
     analyze_logs_button.pack(side="left", padx=5)
     
     # Включить/выключить анализ в реальном времени
-    real_time_analysis_button = tk.Button(button_frame_bottom, text="Включить анализ в реальном времени", command=lambda: threading.Thread(target=real_time_analysis, daemon=True).start())
-    real_time_analysis_button.pack(side="left", padx=5)
+    #real_time_analysis_button = tk.Button(button_frame_bottom, text="Включить анализ в реальном времени", command=lambda: threading.Thread(target=real_time_analysis, daemon=True).start())
+    #real_time_analysis_button.pack(side="left", padx=5)
 
-# Кнопка анализа
+# Глобальная переменная для управления потоком анализа
+analysis_running = False
+
+# кнопка анализа
 def toggle_analysis():
+    """Включение/выключение анализа."""
+    global analysis_running
+
     if analysis_button.config('text')[-1] == "Enable Analysis":
         analysis_button.config(text="Disable Analysis", style="Toggled.TButton")
-        
+        analysis_running = True
+
+        # Запускаем анализ в отдельном потоке
+        threading.Thread(target=real_time_analysis, daemon=True).start()
     else:
         analysis_button.config(text="Enable Analysis", style="")
+        analysis_running = False
         
+# Кнопка настроек
+def open_settings_window():
+    window = tk.Tk()
+    window.title("Настройки")
+    
+    # Устанавливаем размеры окна
+    window.geometry("300x200")
+    
+    # Создаем кнопки
+    load_defense_button = tk.Button(window, text="Загрузить модель отражения атак", command=load_another_model)
+    load_defense_button.pack(side="top", pady=20)
+
+    load_attack_type_button = tk.Button(window, text="Загрузить модель типов атак", command=deep_load_another_model)
+    load_attack_type_button.pack(side="bottom", pady=20)
+
 # Создание главного окна
 root = tk.Tk()
 root.title("Packet Sniffer GUI")
@@ -826,6 +883,10 @@ analysis_button.pack(side="left", padx=5)
 ips_button = ttk.Button(frame_controls, text= "IPS ", command=open_ips_window)
 ips_button.pack(side="left", padx=5)
 
+# Кнопка для открытия окна IPS
+settings_button = ttk.Button(frame_controls, text= "Settings ", command=open_settings_window)
+settings_button.pack(side="left", padx=5)
+
 # Фрейм для управления правилами
 frame_rules = ttk.Frame(root)
 frame_rules.pack(pady=10, fill="x")
@@ -852,6 +913,12 @@ watch_rules_file()
 
 # Обновляем список правил при запуске
 update_rules_list()
+
+# Загрузка модели по умолчанию при запуске
+load_model()
+
+# Загрузка модели по умолчанию при запуске
+deep_load_model()
 
 # Запуск GUI
 root.mainloop()
