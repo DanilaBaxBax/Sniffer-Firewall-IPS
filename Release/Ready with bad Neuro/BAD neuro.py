@@ -181,13 +181,13 @@ def load_rules_from_file():
     global blocked_ips
     if os.path.exists(rules_file):
         with open(rules_file, "r") as file:
-            blocked_ips = [line.strip() for line in file if line.strip()]
+            blocked_ips = [line.strip().split()[0] for line in file if line.strip()]  # Убираем deny
     update_rules_list()
 
 # Запись правил в файл
 def save_rules_to_file():
     with open(rules_file, "w") as file:
-        file.write("\n".join(blocked_ips))
+        file.write("\n".join(f"{ip} deny" for ip in blocked_ips))  # Добавляем deny
 
 # Функция для проверки валидности IP-адреса
 def is_valid_ip(ip):
@@ -240,11 +240,11 @@ def remove_rule(ip=None):
             messagebox.showwarning("Rule", "No IP selected to remove.")
 
 
-# Обновление списка правил в интерфейсе
+# Обновление списка правил в интерфейсе с добавлением действия deny
 def update_rules_list():
     rules_listbox.delete(0, tk.END)
     for ip in blocked_ips:
-        rules_listbox.insert(tk.END, ip)
+        rules_listbox.insert(tk.END, f"{ip} deny")  # Добавляем IP и действие
 
 # Отслеживание изменений в файле
 def watch_rules_file():
@@ -877,7 +877,6 @@ style.configure("Toggled.TButton", background="lightgreen")
 
 analysis_button = ttk.Button(frame_controls, text="Enable Analysis", command=toggle_analysis)
 analysis_button.pack(side="left", padx=5)
-
 
 # Кнопка для открытия окна IPS
 ips_button = ttk.Button(frame_controls, text= "IPS ", command=open_ips_window)
