@@ -11,48 +11,42 @@ model = tf.keras.models.load_model(model_save_path)
 print(f"Model loaded from {model_save_path}")
 
 # Загрузка нового датасета
-df = pd.read_csv("/Users/danilabaxbax/Desktop/Release/Dataset/NF-ToN-IoT.csv")
+df = pd.read_csv("/Users/danilabaxbax/Downloads/packet_logs-3.csv")
 
-# Преобразуем типы трафика из столбца 'Attack' в бинарные метки (Benign = 0, Attack = 1)
-df['Attack'] = df['Attack'].apply(lambda x: 1 if x != 'Benign' else 0)
+# Проверяем, какие столбцы доступны в новом датасете
+print(f"Columns in the dataset: {df.columns}")
 
-# Разделение данных на признаки (X) для предсказания
-X = df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 'FLOW_DURATION_MILLISECONDS']]
+# Указываем столбцы с признаками для предсказаний
+feature_columns = ['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 
+                   'FLOW_DURATION_MILLISECONDS', 'SRC_PORT', 'DST_PORT']
+
+# Убедимся, что все необходимые столбцы есть в датасете
+for col in feature_columns:
+    if col not in df.columns:
+        raise KeyError(f"Column {col} is missing in the dataset.")
+
+# Разделение данных на признаки (X)
+X = df[feature_columns]
 
 # Стандартизация данных
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-# Проверка размера входных данных
-print(f"Shape of input data: {X_scaled.shape}")
-print(f"Shape of the dataframe: {df.shape}")
-
 # Используем модель для предсказания
 y_pred = model.predict(X_scaled)
 
-# Проверка, что предсказания имеют ту же размерность, что и входные данные
-print(f"Shape of predictions: {y_pred.shape}")
-
-# Печать вероятностей для диагностики
-print("Predicted probabilities:")
-print(y_pred)
-
 # Определение меток на основе вероятности для класса "Attack"
-# Предполагаем, что первый столбец — это вероятность для класса "Benign", а второй для "Attack"
-y_pred_classes = (y_pred[:, 1] > 0.5).astype("int32")  # Используем второй столбец для вероятности "Attack"
+y_pred_classes = (y_pred[:, 1] > 0.5).astype("int32")
 
-# Декодируем предсказанные классы обратно в исходные метки
+# Декодируем предсказанные классы обратно в метки
 y_pred_labels = ['Benign' if label == 0 else 'Attack' for label in y_pred_classes.flatten()]
-
-# Убедимся, что размерность предсказаний совпадает с количеством строк в df
-print(f"Length of predictions: {len(y_pred_labels)}")
-print(f"Length of df: {len(df)}")
 
 # Добавляем предсказания в DataFrame
 df['Prediction'] = y_pred_labels
 
 # Выводим несколько строк с предсказаниями
-print(df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 'FLOW_DURATION_MILLISECONDS', 'Prediction']].head())
+print(df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 
+          'FLOW_DURATION_MILLISECONDS', 'Prediction']].head())
 
 # Сохраняем результат в файл
 output_file = '/Users/danilabaxbax/Desktop/Predicted_Network_Traffic.csv'

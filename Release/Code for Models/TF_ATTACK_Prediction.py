@@ -6,7 +6,7 @@ from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 
 # Загрузка датасета
-df = pd.read_csv("/Users/danilabaxbax/Desktop/IDS/NF-ToN-IoT.csv")
+df = pd.read_csv("/Users/danilabaxbax/Desktop/Release/Dataset/NF-ToN-IoT-renamed.csv")
 
 # Извлекаем уникальные метки из столбца 'Label'
 original_labels = df['Label'].unique()
@@ -26,8 +26,14 @@ print(f"Original labels have been saved to {labels_file_path}")
 label_encoder = LabelEncoder()
 df['Label'] = label_encoder.fit_transform(df['Label'])  # Преобразуем метки в числа
 
+
+
+# Переписываем признаки с преобразованными IP
+X = df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 'FLOW_DURATION_MILLISECONDS', 'SRC_PORT', 'DST_PORT']]
+
+
 # Разделение данных на признаки (X) и метки (y)
-X = df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 'FLOW_DURATION_MILLISECONDS']]
+X = df[['IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS', 'FLOW_DURATION_MILLISECONDS', 'SRC_PORT', 'DST_PORT']]
 y = df['Label']  # Метки теперь в поле 'Label'
 
 # Сохраняем индексы исходного датасета
@@ -57,7 +63,7 @@ model.add(tf.keras.layers.Dense(2, activation='softmax'))  # Выходной с
 model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 # Обучение модели с сохранением истории обучения
-history = model.fit(X_train, y_train, epochs=20, batch_size=32, validation_data=(X_test, y_test))
+history = model.fit(X_train, y_train, epochs=2, batch_size=32, validation_data=(X_test, y_test))
 
 # Оценка модели
 y_pred = model.predict(X_test)
