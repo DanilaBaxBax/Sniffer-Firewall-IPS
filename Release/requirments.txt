@@ -1,7 +1,0 @@
-scapy
-matplotlib
-tk
-pandas
-scikit-learn
-tensorflow
-numpy
