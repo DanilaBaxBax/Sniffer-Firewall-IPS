@@ -1,31 +1,59 @@
+# build_combined_model.py
 import pandas as pd
 import pickle
 
-class FakeNeuralNet:
-    def __init__(self, threshold=500):
-        self.threshold = threshold
+class FakeDoSUnknownNet:
+    """
+    Объединённая модель: 
+      - если за секунду порт-скан (> port_threshold уникальных DST_PORT) → 'unknown attack'
+      - elif пакетов/сек > packet_threshold → 'dos'
+      - else → 'benign'
+    """
+    def __init__(self, packet_threshold=500, port_threshold=50):
+        self.packet_threshold = packet_threshold
+        self.port_threshold   = port_threshold
         self.fitted = True
-        self.addr_counts = None  # не используется, но оставим на будущее
+        self.labels = ['benign', 'dos', 'unknown attack']
 
-    def predict(self, X):
-        if not isinstance(X, pd.DataFrame):
-            raise ValueError("Ожидается pandas DataFrame")
-
-        if 'SRC_ADDR' not in X.columns or 'Timestamp' not in X.columns:
-            raise ValueError("Необходимые столбцы: 'SRC_ADDR' и 'Timestamp'")
-
+    def predict(self, X: pd.DataFrame) -> pd.Series:
+        # проверяем колонки
+        if not {'Timestamp','SRC_ADDR','DST_PORT'}.issubset(X.columns):
+            raise ValueError("Нужны колонки 'Timestamp', 'SRC_ADDR' и 'DST_PORT'")
         df = X.copy()
-        df['Second'] = pd.to_datetime(df['Timestamp'], errors='coerce').dt.floor('s')
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+        df['Second']    = df['Timestamp'].dt.floor('s')
 
-        grouped = df.groupby(['SRC_ADDR', 'Second']).size().reset_index(name='Count')
-        df = df.merge(grouped, on=['SRC_ADDR', 'Second'], how='left')
+        # считаем кол-во пакетов
+        counts = (
+            df.groupby(['SRC_ADDR','Second'])
+              .size()
+              .reset_index(name='Count')
+        )
+        # считаем число уникальных портов
+        scans = (
+            df.groupby(['SRC_ADDR','Second'])['DST_PORT']
+              .nunique()
+              .reset_index(name='UniquePorts')
+        )
 
-        return (df['Count'] > self.threshold).astype(int)
+        # мёрджим обратно
+        df = df.merge(counts, on=['SRC_ADDR','Second'], how='left')
+        df = df.merge(scans, on=['SRC_ADDR','Second'], how='left')
 
-# Создание и сохранение модели
-model = FakeNeuralNet(threshold=500)
+        def classify(row):
+            c = row['Count'] or 0
+            p = row['UniquePorts'] or 0
+            if p > self.port_threshold:
+                return 'unknown attack'
+            if c > self.packet_threshold:
+                return 'dos'
+            return 'benign'
 
-with open("fake_neural_net.pkl", "wb") as f:
-    pickle.dump(model, f)
+        # применяем и возвращаем серию
+        return df.apply(classify, axis=1)
 
-print("Модель FakeNeuralNet успешно сохранена в fake_neural_net.pkl")
+if __name__ == "__main__":
+    model = FakeDoSUnknownNet(packet_threshold=500, port_threshold=50)
+    with open("fake_dos_unknown_model.pkl", "wb") as f:
+        pickle.dump(model, f)
+    print("Сохранена модель fake_dos_unknown_model.pkl")

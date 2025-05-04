@@ -455,51 +455,77 @@ deep_model = None
 is_analyzing = False
 attack_type_model = None
 
-class FakeNeuralNet:
-    """Фейковая нейросеть: атака = > threshold запросов от одного IP за 1 секунду"""
-    def __init__(self, threshold=500):
-        self.threshold = threshold
-        self.fitted = True  # Для совместимости, можно не проверять
+# main.py
 
-    def predict(self, X):
-        import pandas as pd
+import pickle
+import pandas as pd
+import os
+import tkinter as tk
+from tkinter import messagebox
+# ... все ваши остальные импорты ...
 
-        if not isinstance(X, pd.DataFrame):
-            raise ValueError("Ожидается pandas DataFrame")
+class FakeDoSUnknownNet:
+    """
+    Объединённая модель:
+      - >port_threshold уникальных портов/сек → 'unknown attack'
+      - elif пакетов/сек > packet_threshold → 'dos'
+      - else → 'benign'
+    """
+    def __init__(self, packet_threshold=500, port_threshold=50):
+        self.packet_threshold = packet_threshold
+        self.port_threshold   = port_threshold
+        self.fitted = True
+        self.labels = ['benign', 'dos', 'unknown attack']
 
-        if 'SRC_ADDR' not in X.columns or 'Timestamp' not in X.columns:
-            raise ValueError("Ожидаются колонки 'SRC_ADDR' и 'Timestamp'")
-
+    def predict(self, X: pd.DataFrame) -> pd.Series:
+        if not {'Timestamp','SRC_ADDR','DST_PORT'}.issubset(X.columns):
+            raise ValueError("Нужны колонки 'Timestamp','SRC_ADDR','DST_PORT'")
         df = X.copy()
-        df['Second'] = pd.to_datetime(df['Timestamp']).dt.floor('s')
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+        df['Second']    = df['Timestamp'].dt.floor('s')
 
-        # Считаем количество запросов от IP в каждую секунду
-        grouped = df.groupby(['SRC_ADDR', 'Second']).size().reset_index(name='Count')
-        df = df.merge(grouped, on=['SRC_ADDR', 'Second'])
+        counts = (
+            df.groupby(['SRC_ADDR','Second'])
+              .size()
+              .reset_index(name='Count')
+        )
+        scans = (
+            df.groupby(['SRC_ADDR','Second'])['DST_PORT']
+              .nunique()
+              .reset_index(name='UniquePorts')
+        )
 
-        return (df['Count'] > self.threshold).astype(int)
+        df = df.merge(counts, on=['SRC_ADDR','Second'], how='left')
+        df = df.merge(scans, on=['SRC_ADDR','Second'], how='left')
 
-    def get_feature_names_out(self):
-        return ['SRC_ADDR']
+        def classify(row):
+            c = row['Count'] or 0
+            p = row['UniquePorts'] or 0
+            if p > self.port_threshold:
+                return 'unknown attack'
+            if c > self.packet_threshold:
+                return 'dos'
+            return 'benign'
 
+        return df.apply(classify, axis=1)
+
+# Теперь безопасно грузим модель:
 def load_model():
     global model
-    model_path = 'fake_neural_net.pkl'
-
+    model_path = 'fake_dos_unknown_model.pkl'
     try:
         with open(model_path, 'rb') as f:
             loaded = pickle.load(f)
-            # Если это словарь — извлекаем .get("model"), иначе — оставляем как есть
             model = loaded.get("model") if isinstance(loaded, dict) else loaded
-
         if not hasattr(model, 'predict'):
-            messagebox.showerror("Ошибка", "Загруженный объект не является моделью.")
+            messagebox.showerror("Ошибка", "Невалидная модель.")
+            model = None
             return
-
-        messagebox.showinfo("Успех", f"Модель определения атак успешно загружена")
-
+        messagebox.showinfo("Успех", "Модель определения атак успешно загружена")
     except Exception as e:
         messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
+        model = None
+
         
 
 def load_another_model():
@@ -574,76 +600,69 @@ def real_time_analysis():
 
     while True:
         try:
+            # Ждём, пока файл появится
             if not os.path.exists(log_file):
                 time.sleep(1)
                 continue
 
             logs_df = pd.read_csv(log_file)
 
-            # Переименование Time -> Timestamp, если нужно
+            # Переименование Time → Timestamp
             if 'Time' in logs_df.columns and 'Timestamp' not in logs_df.columns:
-                logs_df = logs_df.rename(columns={'Time': 'Timestamp'})
+                logs_df.rename(columns={'Time': 'Timestamp'}, inplace=True)
 
-            if 'SRC_ADDR' not in logs_df.columns or 'Timestamp' not in logs_df.columns:
-                print("[ERROR] Отсутствуют 'SRC_ADDR' или 'Timestamp'")
+            # Проверяем обязательные колонки
+            if not {'SRC_ADDR','DST_PORT','Timestamp'}.issubset(logs_df.columns):
+                messagebox.showerror(
+                    "Ошибка",
+                    "Лог должен содержать 'SRC_ADDR', 'DST_PORT' и 'Timestamp'."
+                )
                 return
 
+            # Парсим время
             logs_df['Timestamp'] = pd.to_datetime(logs_df['Timestamp'], errors='coerce')
-            logs_df['Second'] = logs_df['Timestamp'].dt.floor('s')
 
-            # Удаление старых count_x, count_y
-            logs_df = logs_df.drop(columns=[col for col in logs_df.columns if col.startswith("count")], errors='ignore')
+            # Получаем тип атаки для каждой записи
+            logs_df['Prediction_type'] = trained_model.predict(logs_df)
 
-            # Подсчёт количества пакетов по IP и секунде
-            grouped = logs_df.groupby(['SRC_ADDR', 'Second']).size().reset_index(name='count')
-            grouped['Second'] = grouped['Second'].astype(str)
-            logs_df['Second'] = logs_df['Second'].astype(str)
-
-            logs_df = logs_df.merge(grouped, on=['SRC_ADDR', 'Second'], how='left')
-
-            # Предсказание
-            logs_df['Prediction'] = (logs_df['count'] > trained_model.threshold).astype(int)
-
-            # Загрузка существующих заблокированных IP
+            # Считываем уже заблокированные IP
             try:
                 with open(rules_file, 'r') as f:
-                    existing_ips = set(line.strip().split()[0] for line in f if line.strip())
+                    existing_ips = set(line.split()[0] for line in f if line.strip())
             except FileNotFoundError:
                 existing_ips = set()
 
-            # Определение действия
-            def decide_action(row):
-                if row['SRC_ADDR'] in existing_ips:
-                    return 'Deny'
-                return 'Deny' if row['Prediction'] == 1 else 'Allow'
+            # Выбираем IP, для которых модель выдала не 'benign'
+            flagged = logs_df.loc[logs_df['Prediction_type'] != 'benign', 'SRC_ADDR']
+            to_block = set(flagged) - existing_ips
 
-            logs_df['ACTION'] = logs_df.apply(decide_action, axis=1)
-
-            # Новые IP для блокировки
-            new_denies = logs_df.loc[
-                (logs_df['Prediction'] == 1) & (~logs_df['SRC_ADDR'].isin(existing_ips)),
-                'SRC_ADDR'
-            ].unique()
-
-            if new_denies.size:
+            if to_block:
                 with open(rules_file, 'a') as f:
-                    for ip in new_denies:
+                    for ip in to_block:
+                        # Определяем, какую метку выдала модель именно для этой IP
+                        attack_label = (
+                            logs_df
+                            .loc[(logs_df['SRC_ADDR']==ip) & (logs_df['Prediction_type']!='benign'),
+                                 'Prediction_type']
+                            .mode()[0]
+                        )
                         f.write(f"{ip} deny\n")
-                        print(f"[BLOCKED] IP {ip} добавлен в deny")
-                        messagebox.showinfo("Атака обнаружена", f"IP {ip} заблокирован!")
+                        messagebox.showinfo(
+                            "Атака обнаружена",
+                            f"IP {ip} заблокирован ({attack_label})"
+                        )
+                existing_ips |= to_block
 
-            # Сохраняем обновлённый лог
+            # Обновляем столбец ACTION и сохраняем лог
+            logs_df['ACTION'] = logs_df['SRC_ADDR'].apply(
+                lambda ip: 'deny' if ip in existing_ips else 'allow'
+            )
             logs_df.to_csv(log_file, index=False)
 
-            # Отладочный вывод
-            top = grouped.sort_values("count", ascending=False).head(5)
-            print("\n→ Топ активностей за секунду:")
-            print(top)
+            # Для отладки: выводим распределение типов
+            print("→ Распределение по типам атак:\n", logs_df['Prediction_type'].value_counts())
 
-            print(f"\n→ Prediction:\n{logs_df['Prediction'].value_counts()}")
-            print(f"→ Новые IP для блокировки: {list(new_denies)}\n")
-
-            # Циклическая пауза
+            # Пауза 5 секунд (0.1×50)
             for _ in range(50):
                 if not analysis_running:
                     return
@@ -653,6 +672,8 @@ def real_time_analysis():
             print(f"[ERROR] {e}")
             messagebox.showerror("Ошибка анализа", str(e))
             break
+
+
 
 
 class FakeAttackTypeNet:
@@ -708,20 +729,20 @@ class FakeAttackTypeNet:
                 return 'unknown attack'
             # Иначе по объёму трафика
             if c > 500:
-                return 'ddos'
-            elif c > 300:
                 return 'dos'
-            elif c > 200:
+            elif c > 100000:
+                return 'ddos'
+            elif c > 100000:
                 return 'scanning'
-            elif c > 150:
+            elif c > 100000:
                 return 'password'
-            elif c > 100:
+            elif c > 100000:
                 return 'mitm'
-            elif c >  75:
+            elif c >  100000:
                 return 'injection'
-            elif c >  50:
+            elif c >  100000:
                 return 'xss'
-            elif c >  20:
+            elif c >  100000:
                 return 'backdoor'
             else:
                 return 'benign'

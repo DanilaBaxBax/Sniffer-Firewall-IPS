@@ -39,25 +39,25 @@ class FakeAttackTypeNet:
             c = row['Count']
             p = row['UniquePorts'] or 0
 
-            # Если видим сканирование портов >50 портов/сек – неизвестная атака
+             # Если за секунду более 50 разных портов → port scan → unknown attack
             if p > 50:
                 return 'unknown attack'
-            # далее – старые пороги по объёму
+            # Иначе по объёму трафика
             if c > 500:
-                return 'ddos'
-            elif c > 300:
                 return 'dos'
-            elif c > 200:
+            elif c > 100000:
+                return 'ddos'
+            elif c > 100000:
                 return 'scanning'
-            elif c > 150:
+            elif c > 100000:
                 return 'password'
-            elif c > 100:
+            elif c > 100000:
                 return 'mitm'
-            elif c >  75:
+            elif c >  100000:
                 return 'injection'
-            elif c >  50:
+            elif c >  100000:
                 return 'xss'
-            elif c >  20:
+            elif c >  100000:
                 return 'backdoor'
             else:
                 return 'benign'
