@@ -23,7 +23,7 @@ class FakeNeuralNet:
         return (df['Count'] > self.threshold).astype(int)
 
 # Создание и сохранение модели
-model = FakeNeuralNet(threshold=850)
+model = FakeNeuralNet(threshold=500)
 
 with open("fake_neural_net.pkl", "wb") as f:
     pickle.dump(model, f)

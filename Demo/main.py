@@ -377,9 +377,10 @@ def plot_graph():
     graph_window.title("Real-Time Incoming Packet Statistics")
 
     fig, ax = Figure(figsize=(10, 6)), None
+    stats_cache = {}  # Кэш для хранения allow/deny по IP
 
     def update(frame):
-        nonlocal ax
+        nonlocal ax, stats_cache
         fig.clear()
         ax = fig.add_subplot(111)
 
@@ -390,16 +391,22 @@ def plot_graph():
                 return
 
             df['ACTION'] = df['ACTION'].str.lower()
-            allow_counts = df[df['ACTION']=='allow']['SRC_ADDR'].value_counts()
-            deny_counts  = df[df['ACTION']=='deny']['SRC_ADDR'].value_counts()
+            allow_counts = df[df['ACTION'] == 'allow']['SRC_ADDR'].value_counts()
+            deny_counts  = df[df['ACTION'] == 'deny']['SRC_ADDR'].value_counts()
 
             all_ips = sorted(set(allow_counts.index) | set(deny_counts.index))
-            allow_vals = [allow_counts.get(ip,0) for ip in all_ips]
-            deny_vals  = [deny_counts.get(ip,0)  for ip in all_ips]
+            allow_vals = [allow_counts.get(ip, 0) for ip in all_ips]
+            deny_vals  = [deny_counts.get(ip, 0) for ip in all_ips]
+
+            # Обновим кэш статистики
+            stats_cache = {
+                ip: {"allow": allow_counts.get(ip, 0), "deny": deny_counts.get(ip, 0)}
+                for ip in all_ips
+            }
 
             x = range(len(all_ips))
             ax.bar(x, allow_vals, color="green", label="Allow")
-            ax.bar(x, deny_vals, bottom=allow_vals, color="red",   label="Deny")
+            ax.bar(x, deny_vals, bottom=allow_vals, color="red", label="Deny")
 
             ax.set_xticks(x)
             ax.set_xticklabels(all_ips, rotation=45, ha="right")
@@ -412,21 +419,28 @@ def plot_graph():
             print(f"[Graph error] {e}")
 
     def on_click(event):
-        if event.inaxes != ax: return
+        if event.inaxes != ax:
+            return
         x_pos = event.xdata
-        if x_pos is None: return
+        if x_pos is None:
+            return
         idx = int(round(x_pos))
         try:
             ip = ax.get_xticklabels()[idx].get_text()
-            messagebox.showinfo("Информация", f"IP: {ip}")
-        except:
-            pass
+            stats = stats_cache.get(ip, {"allow": 0, "deny": 0})
+            messagebox.showinfo(
+                "Информация об IP",
+                f"IP: {ip}\nAllow: {stats['allow']} пакетов\nDeny: {stats['deny']} пакетов"
+            )
+        except Exception as e:
+            print(f"[Click error] {e}")
 
     canvas = FigureCanvasTkAgg(fig, master=graph_window)
     canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
     ani = FuncAnimation(fig, update, interval=1000)
     canvas.mpl_connect("button_press_event", on_click)
     canvas.draw()
+
 
 
 # Очистка правил
@@ -439,6 +453,7 @@ def clear_rules():
 model = None
 deep_model = None
 is_analyzing = False
+attack_type_model = None
 
 class FakeNeuralNet:
     """Фейковая нейросеть: атака = > threshold запросов от одного IP за 1 секунду"""
@@ -485,6 +500,7 @@ def load_model():
 
     except Exception as e:
         messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
+        
 
 def load_another_model():
     global model
@@ -558,6 +574,10 @@ def real_time_analysis():
 
     while True:
         try:
+            if not os.path.exists(log_file):
+                time.sleep(1)
+                continue
+
             logs_df = pd.read_csv(log_file)
 
             # Переименование Time -> Timestamp, если нужно
@@ -565,38 +585,37 @@ def real_time_analysis():
                 logs_df = logs_df.rename(columns={'Time': 'Timestamp'})
 
             if 'SRC_ADDR' not in logs_df.columns or 'Timestamp' not in logs_df.columns:
-                messagebox.showerror("Ошибка", "Лог должен содержать 'SRC_ADDR' и 'Timestamp'.")
+                print("[ERROR] Отсутствуют 'SRC_ADDR' или 'Timestamp'")
                 return
 
             logs_df['Timestamp'] = pd.to_datetime(logs_df['Timestamp'], errors='coerce')
             logs_df['Second'] = logs_df['Timestamp'].dt.floor('s')
 
-            # Удаляем старые count-поля перед merge
-            logs_df = logs_df.drop(columns=[col for col in logs_df.columns if col.startswith('count')], errors='ignore')
+            # Удаление старых count_x, count_y
+            logs_df = logs_df.drop(columns=[col for col in logs_df.columns if col.startswith("count")], errors='ignore')
 
-            # Подсчёт активности
+            # Подсчёт количества пакетов по IP и секунде
             grouped = logs_df.groupby(['SRC_ADDR', 'Second']).size().reset_index(name='count')
-
-            # Объединяем
-            logs_df['Second'] = logs_df['Second'].astype(str)
             grouped['Second'] = grouped['Second'].astype(str)
+            logs_df['Second'] = logs_df['Second'].astype(str)
+
             logs_df = logs_df.merge(grouped, on=['SRC_ADDR', 'Second'], how='left')
 
-            # Прогноз
+            # Предсказание
             logs_df['Prediction'] = (logs_df['count'] > trained_model.threshold).astype(int)
 
-            # Загрузка правил
+            # Загрузка существующих заблокированных IP
             try:
                 with open(rules_file, 'r') as f:
                     existing_ips = set(line.strip().split()[0] for line in f if line.strip())
             except FileNotFoundError:
                 existing_ips = set()
 
-            # ACTION c учетом вечного deny
+            # Определение действия
             def decide_action(row):
                 if row['SRC_ADDR'] in existing_ips:
-                    return 'deny'
-                return 'deny' if row['Prediction'] == 1 else 'allow'
+                    return 'Deny'
+                return 'Deny' if row['Prediction'] == 1 else 'Allow'
 
             logs_df['ACTION'] = logs_df.apply(decide_action, axis=1)
 
@@ -606,16 +625,14 @@ def real_time_analysis():
                 'SRC_ADDR'
             ].unique()
 
-            # Сохраняем их
             if new_denies.size:
                 with open(rules_file, 'a') as f:
                     for ip in new_denies:
                         f.write(f"{ip} deny\n")
                         print(f"[BLOCKED] IP {ip} добавлен в deny")
                         messagebox.showinfo("Атака обнаружена", f"IP {ip} заблокирован!")
-                existing_ips.update(new_denies)
 
-            # Сохраняем лог обратно
+            # Сохраняем обновлённый лог
             logs_df.to_csv(log_file, index=False)
 
             # Отладочный вывод
@@ -626,7 +643,7 @@ def real_time_analysis():
             print(f"\n→ Prediction:\n{logs_df['Prediction'].value_counts()}")
             print(f"→ Новые IP для блокировки: {list(new_denies)}\n")
 
-            # Пауза
+            # Циклическая пауза
             for _ in range(50):
                 if not analysis_running:
                     return
@@ -638,17 +655,51 @@ def real_time_analysis():
             break
 
 
-def deep_load_model():
-    """Загрузка модели нейронной сети из файла .h5"""
-    global deep_model
-    deep_model_path = 'Attack_Model.h5'  # Загрузка модели по умолчанию при запуске
+class FakeAttackTypeNet:
+    """
+    Фейковая многоклассовая модель классификации типа атаки по количеству пакетов в секунду.
+    """
+    def __init__(self):
+        self.fitted = True
+        # вот этот атрибут используется в графике
+        self.labels = [
+            'benign', 'injection', 'ddos', 'scanning', 'dos',
+            'password', 'backdoor', 'mitm', 'ransomware', 'xss'
+        ]
 
+    def predict(self, X):
+        import pandas as pd
+        df = X.copy()
+        df['Second'] = pd.to_datetime(df['Timestamp'], errors='coerce').dt.floor('s')
+        counts = df.groupby(['SRC_ADDR','Second']).size().reset_index(name='Count')
+        df = df.merge(counts, on=['SRC_ADDR','Second'], how='left')
+        def classify(c):
+            if c>500: return 'ddos'
+            elif c>100000: return 'scanning'
+            elif c>100000: return 'dos'
+            elif c>100000: return 'password'
+            elif c>100000: return 'mitm'
+            elif c>100000: return 'injection'
+            elif c>100000: return 'xss'
+            elif c>10000:  return 'backdoor'
+            elif c>10000:  return 'ransomware'
+            else:      return 'benign'
+        return df['Count'].apply(classify)
+
+
+deep_model = None
+
+def deep_load_model():
+    global attack_type_model
     try:
-        # Загрузка модели в формате h5
-        #deep_model = tf.keras.models.load_model(deep_model_path)
-        messagebox.showinfo("Успех", f"Модель успешно загружена: {deep_model_path}")
+        with open('fake_attack_type_model.pkl','rb') as f:
+            attack_type_model = pickle.load(f)
+        messagebox.showinfo("Успех", "Модель типов атак загружена")
     except Exception as e:
-        messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
+        messagebox.showerror("Ошибка", f"Не удалось загрузить модель:\n{e}")
+
+
+
 
 def deep_load_another_model():
     """Загрузка другой модели через диалоговое окно"""
@@ -861,6 +912,81 @@ def deep_plot_traffic_realtime():
         messagebox.showerror("Ошибка", f"Ошибка при построении графика: {e}")
 
 
+def attack_type_live_plot():
+    import pandas as pd
+    from matplotlib.figure import Figure
+
+    global attack_type_model
+    if attack_type_model is None:
+        messagebox.showerror("Ошибка", "Сначала загрузите модель типов атак.")
+        return
+
+    win = Toplevel(root)
+    win.title("Типы атак в реальном эфире")
+    fig = Figure(figsize=(10,6))
+    ax = fig.add_subplot(111)
+
+    # словарь для IP → множество типов, а затем тип → список IP
+    ip_type_sets = {}
+    ip_by_type = {}
+    bars = []
+    types = attack_type_model.labels
+
+    def update(frame):
+        nonlocal ip_type_sets, ip_by_type, bars
+        ax.clear()
+        try:
+            df = pd.read_csv(log_file)
+            if 'Time' in df.columns and 'Timestamp' not in df.columns:
+                df.rename(columns={'Time':'Timestamp'}, inplace=True)
+            df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+
+            # предсказания
+            df['Prediction_type'] = attack_type_model.predict(df)
+
+            # вычисляем для каждого IP множество типов
+            ip_type_sets = df.groupby('SRC_ADDR')['Prediction_type'] \
+                            .apply(lambda xs: set(xs)) \
+                            .to_dict()
+
+            # строим обратный словарь: тип → список IP
+            ip_by_type = {t: [] for t in types}
+            for ip, tset in ip_type_sets.items():
+                for t in tset:
+                    ip_by_type[t].append(ip)
+            # убираем benign у тех, у кого есть другие типы
+            ip_by_type['benign'] = [ip for ip in ip_by_type['benign']
+                                    if ip_type_sets[ip] == {'benign'}]
+
+            # считаем пакеты по типу (для высоты столбцов оставим прежнюю логику)
+            counts = df['Prediction_type'].value_counts()
+            vals = [counts.get(t,0) for t in types]
+
+            # рисуем
+            bars = ax.bar(types, vals)
+            ax.set_ylabel("Количество пакетов")
+            ax.set_title("Распределение типов трафика")
+            ax.set_xticks(range(len(types)))
+            ax.set_xticklabels(types, rotation=45, ha="right")
+            ax.grid(True)
+
+        except Exception as e:
+            ax.text(0.5, 0.5, f"Ошибка:\n{e}", ha='center', va='center')
+
+    def on_click(event):
+        for bar, t in zip(bars, types):
+            if bar.contains(event)[0]:
+                ips = sorted(ip_by_type.get(t, []))
+                text = "\n".join(ips) if ips else "(нет адресов)"
+                messagebox.showinfo(f"IP-адреса ({t})", text)
+                break
+
+    canvas = FigureCanvasTkAgg(fig, master=win)
+    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    ani = FuncAnimation(fig, update, interval=1000)
+    canvas.mpl_connect("button_press_event", on_click)
+    canvas.draw()
+
 def open_ips_window():
     """Открывает новое окно для работы с IPS."""
     global ips_window, real_time_analysis_button
@@ -871,6 +997,11 @@ def open_ips_window():
     # Фрейм для верхних кнопок
     button_frame_top = tk.Frame(ips_window)
     button_frame_top.pack(pady=10, fill='x')
+    # внутри open_ips_window(), в button_frame_top:
+    attack_type_rt_button = tk.Button(button_frame_top,
+    text="Типы атак в реальном эфире",command=attack_type_live_plot)
+    attack_type_rt_button.pack(side="left", padx=5)
+
 
     # Верхние кнопки
     #load_deep_model_button = tk.Button(button_frame_top, text="Загрузить глубокую модель", command=deep_load_another_model)
