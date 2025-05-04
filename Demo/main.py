@@ -496,7 +496,7 @@ def load_model():
             messagebox.showerror("Ошибка", "Загруженный объект не является моделью.")
             return
 
-        messagebox.showinfo("Успех", f"Модель успешно загружена: {model_path}")
+        messagebox.showinfo("Успех", f"Модель определения атак успешно загружена")
 
     except Exception as e:
         messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
@@ -657,34 +657,77 @@ def real_time_analysis():
 
 class FakeAttackTypeNet:
     """
-    Фейковая многоклассовая модель классификации типа атаки по количеству пакетов в секунду.
+    Фейковая многоклассовая модель классификации типа атаки
+    по объёму пакетов и сканированию портов.
     """
     def __init__(self):
         self.fitted = True
-        # вот этот атрибут используется в графике
+        # эти метки используются в графике и при построении столбцов
         self.labels = [
             'benign', 'injection', 'ddos', 'scanning', 'dos',
-            'password', 'backdoor', 'mitm', 'ransomware', 'xss'
+            'password', 'backdoor', 'mitm', 'ransomware', 'xss',
+            'unknown attack'
         ]
 
     def predict(self, X):
         import pandas as pd
+
+        # Проверяем, что пришли нужные колонки
+        if not {'SRC_ADDR', 'DST_PORT', 'Timestamp'}.issubset(X.columns):
+            raise ValueError("Ожидаются колонки 'SRC_ADDR', 'DST_PORT' и 'Timestamp'")
+
         df = X.copy()
-        df['Second'] = pd.to_datetime(df['Timestamp'], errors='coerce').dt.floor('s')
-        counts = df.groupby(['SRC_ADDR','Second']).size().reset_index(name='Count')
-        df = df.merge(counts, on=['SRC_ADDR','Second'], how='left')
-        def classify(c):
-            if c>500: return 'ddos'
-            elif c>100000: return 'scanning'
-            elif c>100000: return 'dos'
-            elif c>100000: return 'password'
-            elif c>100000: return 'mitm'
-            elif c>100000: return 'injection'
-            elif c>100000: return 'xss'
-            elif c>10000:  return 'backdoor'
-            elif c>10000:  return 'ransomware'
-            else:      return 'benign'
-        return df['Count'].apply(classify)
+        # Приводим к datetime и секунда
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+        df['Second'] = df['Timestamp'].dt.floor('s')
+
+        # 1) Считаем общее число пакетов от каждой SRC_ADDR за секунду
+        counts = (
+            df.groupby(['SRC_ADDR','Second'])
+              .size()
+              .reset_index(name='Count')
+        )
+        # 2) Считаем число уникальных DST_PORT за секунду (port‐scan)
+        port_scans = (
+            df.groupby(['SRC_ADDR','Second'])['DST_PORT']
+              .nunique()
+              .reset_index(name='UniquePorts')
+        )
+
+        # Мёрджим обе статистики
+        df = df.merge(counts,     on=['SRC_ADDR','Second'], how='left')
+        df = df.merge(port_scans, on=['SRC_ADDR','Second'], how='left')
+
+        # Функция-классификатор
+        def classify(row):
+            c = row['Count']
+            p = row.get('UniquePorts', 0) or 0
+
+            # Если за секунду более 50 разных портов → port scan → unknown attack
+            if p > 50:
+                return 'unknown attack'
+            # Иначе по объёму трафика
+            if c > 500:
+                return 'ddos'
+            elif c > 300:
+                return 'dos'
+            elif c > 200:
+                return 'scanning'
+            elif c > 150:
+                return 'password'
+            elif c > 100:
+                return 'mitm'
+            elif c >  75:
+                return 'injection'
+            elif c >  50:
+                return 'xss'
+            elif c >  20:
+                return 'backdoor'
+            else:
+                return 'benign'
+
+        # Применяем классификацию к каждой строке
+        return df.apply(classify, axis=1)
 
 
 deep_model = None
@@ -923,52 +966,60 @@ def attack_type_live_plot():
 
     win = Toplevel(root)
     win.title("Типы атак в реальном эфире")
-    fig = Figure(figsize=(10,6))
+
+    # Больший холст и tight_layout для меток
+    fig = Figure(figsize=(14, 6))
     ax = fig.add_subplot(111)
 
-    # словарь для IP → множество типов, а затем тип → список IP
+    # Список типов из модели, с гарантией 'unknown attack'
+    types = list(attack_type_model.labels)
+    if 'unknown attack' not in types:
+        types.append('unknown attack')
+
+    # Кэшируем IP для каждого типа
     ip_type_sets = {}
-    ip_by_type = {}
+    ip_by_type = {t: [] for t in types}
     bars = []
-    types = attack_type_model.labels
 
     def update(frame):
         nonlocal ip_type_sets, ip_by_type, bars
         ax.clear()
         try:
             df = pd.read_csv(log_file)
+            # если колонка 'Time' вместо 'Timestamp'
             if 'Time' in df.columns and 'Timestamp' not in df.columns:
-                df.rename(columns={'Time':'Timestamp'}, inplace=True)
+                df.rename(columns={'Time': 'Timestamp'}, inplace=True)
             df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
 
-            # предсказания
+            # предсказание типов
             df['Prediction_type'] = attack_type_model.predict(df)
 
-            # вычисляем для каждого IP множество типов
+            # для каждого IP — множество его типов
             ip_type_sets = df.groupby('SRC_ADDR')['Prediction_type'] \
-                            .apply(lambda xs: set(xs)) \
-                            .to_dict()
-
-            # строим обратный словарь: тип → список IP
+                             .apply(lambda xs: set(xs)).to_dict()
+            # обратный словарь: тип → список IP
             ip_by_type = {t: [] for t in types}
             for ip, tset in ip_type_sets.items():
                 for t in tset:
                     ip_by_type[t].append(ip)
-            # убираем benign у тех, у кого есть другие типы
-            ip_by_type['benign'] = [ip for ip in ip_by_type['benign']
-                                    if ip_type_sets[ip] == {'benign'}]
+            # в benign оставляем только тех, кто был исключительно benign
+            ip_by_type['benign'] = [
+                ip for ip in ip_by_type['benign']
+                if ip_type_sets.get(ip, set()) == {'benign'}
+            ]
 
-            # считаем пакеты по типу (для высоты столбцов оставим прежнюю логику)
+            # считаем пакеты каждого типа
             counts = df['Prediction_type'].value_counts()
-            vals = [counts.get(t,0) for t in types]
+            vals = [counts.get(t, 0) for t in types]
 
-            # рисуем
+            # рисуем столбцы
             bars = ax.bar(types, vals)
             ax.set_ylabel("Количество пакетов")
             ax.set_title("Распределение типов трафика")
             ax.set_xticks(range(len(types)))
-            ax.set_xticklabels(types, rotation=45, ha="right")
+            ax.set_xticklabels(types, rotation=45, ha="right", fontsize=8)
             ax.grid(True)
+            fig.tight_layout()
 
         except Exception as e:
             ax.text(0.5, 0.5, f"Ошибка:\n{e}", ha='center', va='center')
@@ -976,16 +1027,16 @@ def attack_type_live_plot():
     def on_click(event):
         for bar, t in zip(bars, types):
             if bar.contains(event)[0]:
-                ips = sorted(ip_by_type.get(t, []))
-                text = "\n".join(ips) if ips else "(нет адресов)"
-                messagebox.showinfo(f"IP-адреса ({t})", text)
+                ips = sorted(ip_by_type.get(t, [])) or ["(нет адресов)"]
+                messagebox.showinfo(f"IP-адреса ({t})", "\n".join(ips))
                 break
 
     canvas = FigureCanvasTkAgg(fig, master=win)
     canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-    ani = FuncAnimation(fig, update, interval=1000)
+    ani = FuncAnimation(fig, update, interval=1000, cache_frame_data=False)
     canvas.mpl_connect("button_press_event", on_click)
     canvas.draw()
+
 
 def open_ips_window():
     """Открывает новое окно для работы с IPS."""
