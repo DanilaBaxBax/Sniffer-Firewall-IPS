@@ -547,6 +547,98 @@ def load_another_model():
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
 
+# ────────────────────────────────────────────────────────────────────────────────
+# Подключение Random Forest-модели
+rf_model = None
+
+def load_rf_model():
+    """Загрузка Random Forest-модели по умолчанию из файла random_forest_model.pkl"""
+    global rf_model
+    model_path = 'random_forest_model-2.pkl'  # убедитесь, что файл именно так называется
+    try:
+        with open(model_path, 'rb') as f:
+            loaded = pickle.load(f)
+        # если загрузилось словарём — пытаемся взять loaded["model"], иначе — сам объект
+        rf_model = loaded.get("model", loaded) if isinstance(loaded, dict) else loaded
+        if not hasattr(rf_model, "predict"):
+            raise ValueError("В pkl-файле нет объекта с методом predict")
+        messagebox.showinfo("Успех", f"RF-модель успешно загружена: {model_path}")
+    except Exception as e:
+        rf_model = None
+        messagebox.showerror("Ошибка", f"Не удалось загрузить RF-модель:\n{e}")
+
+def load_another_rf_model():
+    """Загрузка другой RF-модели через диалоговое окно"""
+    global rf_model
+    path = filedialog.askopenfilename(filetypes=[("Pickle files", "*.pkl")])
+    if not path:
+        return
+    try:
+        with open(path, 'rb') as f:
+            rf_model = pickle.load(f)
+        messagebox.showinfo("Успех", f"RF-модель успешно загружена: {path}")
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось загрузить RF-модель:\n{e}")
+
+def analyze_logs_with_rf():
+    """Анализ логов с помощью RF-модели: дописывает столбец 'prediction' и сохраняет в Analyzed Dataset."""
+    global rf_model
+    if rf_model is None or not hasattr(rf_model, "predict"):
+        messagebox.showerror("Ошибка", "Сначала загрузите корректную RF-модель (*.pkl).")
+        return
+
+    # Выбор файла логов
+    log_path = filedialog.askopenfilename(
+        title="Выберите файл логов для RF-анализа",
+        filetypes=[("CSV файлы", "*.csv"), ("Все файлы", "*.*")]
+    )
+    if not log_path:
+        return
+
+    try:
+        df = pd.read_csv(log_path)
+
+        # Определяем, какие признаки ждёт модель
+        if hasattr(rf_model, "feature_names_in_"):
+            features = list(rf_model.feature_names_in_)
+        else:
+            # Если модель старая и не хранит feature_names_in_
+            features = [
+                'IN_BYTES', 'OUT_BYTES', 'IN_PKTS', 'OUT_PKTS',
+                'FLOW_DURATION_MILLISECONDS'
+            ]
+
+        missing = [c for c in features if c not in df.columns]
+        if missing:
+            messagebox.showerror(
+                "Ошибка",
+                f"В файле отсутствуют столбцы: {', '.join(missing)}"
+            )
+            return
+
+        X = df[features]
+        preds = rf_model.predict(X)
+
+        # Преобразуем предсказания в метки
+        df['prediction'] = ['attack' if p else 'benign' for p in preds]
+
+        # Создаём папку для результатов
+        output_dir = "Analyzed Dataset"
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Формируем имя выходного файла
+        base = os.path.splitext(os.path.basename(log_path))[0]
+        output_path = os.path.join(output_dir, f"{base}_analyzed.csv")
+
+        # Сохраняем результат
+        df.to_csv(output_path, index=False)
+        messagebox.showinfo(
+            "Успех",
+            f"RF-анализ логов завершён, файл сохранён:\n{output_path}"
+        )
+
+    except Exception as e:
+        messagebox.showerror("Ошибка при RF-анализе логов", str(e))
 
 
 
@@ -1079,11 +1171,11 @@ def open_ips_window():
     #load_deep_model_button = tk.Button(button_frame_top, text="Загрузить глубокую модель", command=deep_load_another_model)
     #load_deep_model_button.pack(side="left", padx=5)
 
-    deep_analysis_button = tk.Button(button_frame_top, text="Глубокий анализ", command=deep_analyze_logs)
-    deep_analysis_button.pack(side="left", padx=5)
+    #deep_analysis_button = tk.Button(button_frame_top, text="Глубокий анализ", command=deep_analyze_logs)
+    #deep_analysis_button.pack(side="left", padx=5)
 
-    analyze_button = tk.Button(button_frame_top, text="Построить график", command=deep_plot_traffic_realtime)
-    analyze_button.pack(side="left", padx=5)
+    #analyze_button = tk.Button(button_frame_top, text="Построить график", command=deep_plot_traffic_realtime)
+    #analyze_button.pack(side="left", padx=5)
 
     # Фрейм для нижних кнопок
     button_frame_bottom = tk.Frame(ips_window)
@@ -1093,7 +1185,7 @@ def open_ips_window():
     #load_model_button = tk.Button(button_frame_bottom, text="Загрузить модель", command=load_another_model)
     #load_model_button.pack(side="left", padx=5)
 
-    analyze_logs_button = tk.Button(button_frame_bottom, text="Провести анализ", command=analyze_logs)
+    analyze_logs_button = tk.Button(button_frame_bottom, text="Провести анализ", command=analyze_logs_with_rf)
     analyze_logs_button.pack(side="left", padx=5)
     
     # Включить/выключить анализ в реальном времени
@@ -1200,6 +1292,9 @@ load_model()
 
 # Загрузка модели по умолчанию при запуске
 deep_load_model()
+
+# Загрузка модели по умолчанию при запуске
+load_rf_model()
 
 # Запуск GUI
 root.mainloop()
