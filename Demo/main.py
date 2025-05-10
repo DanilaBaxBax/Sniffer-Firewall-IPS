@@ -274,43 +274,41 @@ def watch_rules_file():
 
 # Открытие файла логов
 def open_logs():
-    file_path = filedialog.askopenfilename(
-        title="Open Log File",
-        filetypes=(("CSV Files", "*.csv"), ("All Files", "*.*")),
-        initialfile=log_file
-    )
-    if file_path:
-        try:
-            log_window = tk.Toplevel(root)
-            log_window.title("Log File")
-            text_area = tk.Text(log_window, wrap="none", width=100, height=30)
+    file_path = log_file  # всегда открываем packet_logs.csv
+    if not os.path.exists(file_path):
+        messagebox.showerror("Error", f"Log file '{file_path}' not found.")
+        return
 
-            # Функция для обновления логов
-            def update_logs():
-                try:
-                    with open(file_path, mode='r') as file:
-                        logs = file.read()
-                    text_area.configure(state="normal")
-                    text_area.delete(1.0, tk.END)  # Очистка текстового поля
-                    text_area.insert(tk.END, logs)  # Вставка новых логов
-                    text_area.configure(state="disabled")
-                except Exception as e:
-                    messagebox.showerror("Error", f"Could not open log file: {e}")
+    try:
+        log_window = tk.Toplevel(root)
+        log_window.title("Log File")
+        text_area = tk.Text(log_window, wrap="none", width=100, height=30)
 
-                # Планируем следующее обновление через 10000 мс (10 секунда)
-                log_window.after(10000, update_logs)
+        def update_logs():
+            try:
+                with open(file_path, mode='r') as f:
+                    logs = f.read()
+                text_area.configure(state="normal")
+                text_area.delete("1.0", tk.END)
+                text_area.insert(tk.END, logs)
+                text_area.configure(state="disabled")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not read log file: {e}")
+            # обновляем снова через 10000 мс
+            log_window.after(10000, update_logs)
 
-            # Первоначальное обновление логов
-            update_logs()
+        # первое заполнение и запуск цикла обновления
+        update_logs()
 
-            # Кнопка для обновления логов вручную
-            refresh_button = ttk.Button(log_window, text="Refresh Logs", command=update_logs)
-            refresh_button.pack(side="bottom", padx=10, pady=10)
+        # кнопка для ручного обновления
+        refresh_button = ttk.Button(log_window, text="Refresh Logs", command=update_logs)
+        refresh_button.pack(side="bottom", padx=10, pady=10)
 
-            text_area.pack(fill="both", expand=True)
+        text_area.pack(fill="both", expand=True)
 
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not open log file: {e}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not open log window: {e}")
+
 
 
 # Построение графика
