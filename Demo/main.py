@@ -260,13 +260,17 @@ def watch_rules_file():
     try:
         if os.path.exists(rules_file):
             with open(rules_file, "r") as file:
-                new_ips = [line.strip() for line in file if line.strip()]
-                if new_ips != blocked_ips:
-                    blocked_ips = new_ips
+                # разбиваем по пробелу и берём только IP
+                new_ips = [line.strip().split()[0] for line in file if line.strip()]
+                # сравниваем как множества, чтобы сработало даже при другом порядке
+                if set(new_ips) != set(blocked_ips):
+                    blocked_ips[:] = new_ips  # сохраняем только голые IP
                     update_rules_list()
     except Exception as e:
         print(f"Error watching file: {e}")
+    # проверяем снова через секунду
     root.after(1000, watch_rules_file)
+
 
 # Открытие файла логов
 def open_logs():
@@ -547,7 +551,7 @@ def load_another_model():
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить модель: {e}")
 
-# ────────────────────────────────────────────────────────────────────────────────
+
 # Подключение Random Forest-модели
 rf_model = None
 
