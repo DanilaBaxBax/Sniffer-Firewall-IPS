@@ -1090,16 +1090,14 @@ def attack_type_live_plot():
     win = Toplevel(root)
     win.title("Типы атак в реальном эфире")
 
-    # Больший холст и tight_layout для меток
     fig = Figure(figsize=(14, 6))
     ax = fig.add_subplot(111)
 
-    # Список типов из модели, с гарантией 'unknown attack'
+    # Типы из модели, с гарантией 'unknown attack'
     types = list(attack_type_model.labels)
     if 'unknown attack' not in types:
         types.append('unknown attack')
 
-    # Кэшируем IP для каждого типа
     ip_type_sets = {}
     ip_by_type = {t: [] for t in types}
     bars = []
@@ -1109,34 +1107,35 @@ def attack_type_live_plot():
         ax.clear()
         try:
             df = pd.read_csv(log_file)
-            # если колонка 'Time' вместо 'Timestamp'
             if 'Time' in df.columns and 'Timestamp' not in df.columns:
                 df.rename(columns={'Time': 'Timestamp'}, inplace=True)
             df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
-
-            # предсказание типов
             df['Prediction_type'] = attack_type_model.predict(df)
 
-            # для каждого IP — множество его типов
+            # собираем IP по типам
             ip_type_sets = df.groupby('SRC_ADDR')['Prediction_type'] \
                              .apply(lambda xs: set(xs)).to_dict()
-            # обратный словарь: тип → список IP
             ip_by_type = {t: [] for t in types}
             for ip, tset in ip_type_sets.items():
                 for t in tset:
                     ip_by_type[t].append(ip)
-            # в benign оставляем только тех, кто был исключительно benign
             ip_by_type['benign'] = [
                 ip for ip in ip_by_type['benign']
                 if ip_type_sets.get(ip, set()) == {'benign'}
             ]
 
-            # считаем пакеты каждого типа
             counts = df['Prediction_type'].value_counts()
             vals = [counts.get(t, 0) for t in types]
 
-            # рисуем столбцы
-            bars = ax.bar(types, vals)
+            # задаём цвета: benign — зелёный, unknown attack — жёлтый, остальные — красный
+            colors = [
+                'green' if t == 'benign'
+                else 'yellow' if t == 'unknown attack'
+                else 'red'
+                for t in types
+            ]
+
+            bars = ax.bar(types, vals, color=colors)
             ax.set_ylabel("Количество пакетов")
             ax.set_title("Распределение типов трафика")
             ax.set_xticks(range(len(types)))
@@ -1159,7 +1158,6 @@ def attack_type_live_plot():
     ani = FuncAnimation(fig, update, interval=1000, cache_frame_data=False)
     canvas.mpl_connect("button_press_event", on_click)
     canvas.draw()
-
 
 def open_ips_window():
     """Открывает новое окно для работы с IPS."""
