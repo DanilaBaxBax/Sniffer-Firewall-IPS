@@ -570,15 +570,23 @@ def load_rf_model():
 def load_another_rf_model():
     """Загрузка другой RF-модели через диалоговое окно"""
     global rf_model
-    path = filedialog.askopenfilename(filetypes=[("Pickle files", "*.pkl")])
+    path = filedialog.askopenfilename(
+        title="Выберите RF-модель анализа логов (.pkl)",
+        filetypes=[("Pickle files", "*.pkl")]
+    )
     if not path:
         return
     try:
         with open(path, 'rb') as f:
-            rf_model = pickle.load(f)
-        messagebox.showinfo("Успех", f"RF-модель успешно загружена: {path}")
+            loaded = pickle.load(f)
+        rf_model = loaded.get("model", loaded) if isinstance(loaded, dict) else loaded
+        if not hasattr(rf_model, "predict"):
+            raise ValueError("В pkl-файле нет объекта с методом predict")
+        messagebox.showinfo("Успех", f"RF-модель загружена:\n{path}")
     except Exception as e:
-        messagebox.showerror("Ошибка", f"Не удалось загрузить RF-модель:\n{e}")
+        rf_model = None
+        messagebox.showerror("Ошибка", f"Не удалось загрузить модель:\n{e}")
+
 
 def analyze_logs_with_rf():
     """Анализ логов с помощью RF-модели: дописывает столбец 'prediction' и сохраняет в Analyzed Dataset."""
@@ -1153,44 +1161,39 @@ def attack_type_live_plot():
 
 def open_ips_window():
     """Открывает новое окно для работы с IPS."""
-    global ips_window, real_time_analysis_button
+    global ips_window
     ips_window = tk.Toplevel()
     ips_window.title("IPS Система")
-    ips_window.geometry("600x400")  # Увеличиваем размер окна
+    ips_window.geometry("600x150")  # чуть поменьше по высоте
 
-    # Фрейм для верхних кнопок
-    button_frame_top = tk.Frame(ips_window)
-    button_frame_top.pack(pady=10, fill='x')
-    # внутри open_ips_window(), в button_frame_top:
-    attack_type_rt_button = tk.Button(button_frame_top,
-    text="Типы атак в реальном эфире",command=attack_type_live_plot)
-    attack_type_rt_button.pack(side="left", padx=5)
+    # Создаем фрейм для кнопок
+    button_frame = ttk.Frame(ips_window, padding=10)
+    button_frame.pack(fill="x", expand=True)
 
+    # Делаем по два столбца равной ширины
+    button_frame.columnconfigure((0, 1), weight=1)
 
-    # Верхние кнопки
-    #load_deep_model_button = tk.Button(button_frame_top, text="Загрузить глубокую модель", command=deep_load_another_model)
-    #load_deep_model_button.pack(side="left", padx=5)
+    # Кнопки
+    btn_attack_types = ttk.Button(
+        button_frame,
+        text="Типы атак\nв реальном эфире",
+        command=attack_type_live_plot
+    )
+    btn_attack_types.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
 
-    #deep_analysis_button = tk.Button(button_frame_top, text="Глубокий анализ", command=deep_analyze_logs)
-    #deep_analysis_button.pack(side="left", padx=5)
+    btn_rf_analysis = ttk.Button(
+        button_frame,
+        text="RF-анализ\nлогов",
+        command=analyze_logs_with_rf
+    )
+    btn_rf_analysis.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
 
-    #analyze_button = tk.Button(button_frame_top, text="Построить график", command=deep_plot_traffic_realtime)
-    #analyze_button.pack(side="left", padx=5)
+        # button_frame.columnconfigure((0,1,2), weight=1)
+    # btn_deep = ttk.Button(button_frame, text="Глубокий анализ", command=deep_analyze_logs)
+    # btn_deep.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
+    # btn_plot = ttk.Button(button_frame, text="График трафика", command=deep_plot_traffic_realtime)
+    # btn_plot.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
 
-    # Фрейм для нижних кнопок
-    button_frame_bottom = tk.Frame(ips_window)
-    button_frame_bottom.pack(pady=10, fill='x', side='bottom')
-
-    # Нижние кнопки
-    #load_model_button = tk.Button(button_frame_bottom, text="Загрузить модель", command=load_another_model)
-    #load_model_button.pack(side="left", padx=5)
-
-    analyze_logs_button = tk.Button(button_frame_bottom, text="Провести анализ", command=analyze_logs_with_rf)
-    analyze_logs_button.pack(side="left", padx=5)
-    
-    # Включить/выключить анализ в реальном времени
-    #real_time_analysis_button = tk.Button(button_frame_bottom, text="Включить анализ в реальном времени", command=lambda: threading.Thread(target=real_time_analysis, daemon=True).start())
-    #real_time_analysis_button.pack(side="left", padx=5)
 
 # Глобальная переменная для управления потоком анализа
 analysis_running = False
@@ -1212,18 +1215,35 @@ def toggle_analysis():
         
 # Кнопка настроек
 def open_settings_window():
-    window = tk.Tk()
+    # вместо tk.Tk() — Toplevel, чтобы не создавать второй корень:
+    window = Toplevel(root)
     window.title("Настройки")
-    
-    # Устанавливаем размеры окна
     window.geometry("300x200")
-    
-    # Создаем кнопки
-    load_defense_button = tk.Button(window, text="Загрузить модель отражения атак", command=load_another_model)
-    load_defense_button.pack(side="top", pady=20)
 
-    load_attack_type_button = tk.Button(window, text="Загрузить модель типов атак", command=deep_load_another_model)
-    load_attack_type_button.pack(side="bottom", pady=20)
+    pad = {"padx": 20, "pady": 10}
+
+    # Существующие кнопки:
+    load_defense_button = tk.Button(
+        window,
+        text="Загрузить модель отражения атак",
+        command=load_another_model
+    )
+    load_defense_button.pack(fill="x", **pad)
+
+    load_attack_type_button = tk.Button(
+        window,
+        text="Загрузить модель типов атак",
+        command=deep_load_another_model
+    )
+    load_attack_type_button.pack(fill="x", **pad)
+
+    # Новая кнопка для RF-модели анализа логов:
+    load_log_model_button = tk.Button(
+        window,
+        text="Загрузить модель анализа логов",
+        command=load_another_rf_model
+    )
+    load_log_model_button.pack(fill="x", **pad)
 
 # Создание главного окна
 root = tk.Tk()
